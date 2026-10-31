@@ -1,46 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rocky AR Tour</title>
+
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
-<style>
-  html { background:#000; }   /* NOT on body: MindAR camera video sits behind the body, a body background would hide it */
-  html,body { margin:0; height:100%; overflow:hidden; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  #status { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:10000;
-    background:rgba(9,14,32,.9); color:#f2f5fa; padding:8px 16px; border-radius:20px; font-size:14px;
-    border:1px solid #ff6a00; transition:opacity .3s; pointer-events:none; white-space:nowrap; }
-  #status.hidden { opacity:0; }
-  #err { position:fixed; inset:0; z-index:20000; display:none; align-items:center; justify-content:center; text-align:center;
-    background:#0a101e; color:#fff; padding:24px; font-size:16px; }
-</style>
-</head>
-<body>
 
-<div id="err"></div>
-<div id="status">Loading Rocky...</div>
+<style>
+  /* Same as the known-working page: NO background on html/body, or the camera video (z-index -2) is hidden. */
+  body { margin: 0; overflow: hidden; }
+  #err { position:fixed; inset:0; z-index:20000; display:none; align-items:center; justify-content:center; text-align:center;
+         background:#0a101e; color:#fff; padding:24px; font:16px system-ui, sans-serif; }
+</style>
 
 <script>
 /* =====================================================================
    EDIT THIS SECTION
    ===================================================================== */
 const CONFIG = {
-  model: 'rocky.glb',        // optimised RB19 model (7 MB)
-  target: 'targets.mind',    // compiled from card.png - do not change card.png after compiling
+  model: 'rocky.glb',
   // Axes of THIS model file (checked): nose points to +Z, up is +Y.
   modelUp:      [0, 1, 0],
   modelForward: [0, 0, 1],
   size: 1.35,                // Rocky's length in card widths (the card is 1 wide, 1.4 tall)
   lift: 0.35,                // how high Rocky floats above the card
   panelPos: [1.2, 0.1, 0.3], // where the text panel floats: [right of card centre, up, out]
-  panelSize: [0.9, 0.7],    // panel width, height (card widths)
+  panelSize: [0.85, 0.66],   // panel width, height (card widths)
   stopSeconds: 10,           // time on each view
   turnSeconds: 1.2           // time Rocky takes to turn before the text fades in
 };
 
-// The tour plays in this order. Tap the screen to skip ahead.
 // face: 'front' | 'left' (side) | 'bottom' | 'back' | 'top' | 'right' | 'iso'
 const VIEWS = [
   { face:'front', title:'FRONT VIEW',
@@ -56,30 +47,7 @@ const VIEWS = [
 ];
 /* ===================================================================== */
 
-const preview = new URLSearchParams(location.search).has('preview');
-
-// ---- build scene (AR normally, plain 3D with ?preview for desktop testing) ----
-const sceneOpen = preview
-  ? '<a-scene vr-mode-ui="enabled:false" renderer="colorManagement:true" device-orientation-permission-ui="enabled:false" background="color:#10182b">'
-  : '<a-scene mindar-image="imageTargetSrc:' + CONFIG.target + '; filterMinCF:0.0001; filterBeta:0.001; uiScanning:no; uiLoading:no" ' +
-    'color-space="sRGB" renderer="colorManagement:true" vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:false">';
-const anchorOpen = preview ? '<a-entity id="anchor" position="-0.55 0 -2.9">' : '<a-entity id="anchor" mindar-image-target="targetIndex:0">';
-document.body.insertAdjacentHTML('afterbegin',
-  sceneOpen +
-    '<a-camera position="0 0 0" look-controls="enabled:false" wasd-controls="enabled:false"></a-camera>' +
-    '<a-entity light="type:hemisphere; color:#ffffff; groundColor:#8895b0; intensity:1.3"></a-entity>' +
-    '<a-entity light="type:directional; intensity:1.7" position="1 2 3"></a-entity>' +
-    '<a-entity light="type:directional; intensity:0.9" position="-2 -1 2"></a-entity>' +
-    '<a-entity light="type:directional; intensity:1.6" position="0 0 5"></a-entity>' +   // headlight: lights whichever side faces you (the dark underside)
-    anchorOpen +
-      '<a-entity id="viewer" position="0 0 ' + CONFIG.lift + '" car-viewer>' +
-        '<a-entity id="fit"><a-gltf-model id="car" src="' + CONFIG.model + '"></a-gltf-model></a-entity>' +
-      '</a-entity>' +
-      '<a-entity id="infopanel" info-panel position="' + CONFIG.panelPos.join(' ') + '"></a-entity>' +
-    '</a-entity>' +
-  '</a-scene>');
-
-// ---- view orientation maths ----
+/* ---- orientation maths: which way to turn Rocky for each view ---- */
 function viewQuat(face) {
   const V = (a) => new THREE.Vector3(a[0], a[1], a[2]).normalize();
   const U = V(CONFIG.modelUp), F = V(CONFIG.modelForward);
@@ -96,10 +64,11 @@ function viewQuat(face) {
   }
   u.sub(f.clone().multiplyScalar(u.dot(f))).normalize();
   const x = new THREE.Vector3().crossVectors(u, f);
-  const m = new THREE.Matrix4().makeBasis(x, u, f);   // world axes expressed in model space
+  const m = new THREE.Matrix4().makeBasis(x, u, f);
   return new THREE.Quaternion().setFromRotationMatrix(m).invert();
 }
 
+/* Components are registered here in the head, BEFORE the scene is parsed, so they are always ready. */
 AFRAME.registerComponent('car-viewer', {
   init() {
     this.goal = viewQuat(VIEWS[0].face);
@@ -112,7 +81,39 @@ AFRAME.registerComponent('car-viewer', {
   }
 });
 
-// ---- the floating text panel (a rounded card drawn on a canvas, fades in and out) ----
+/* fit Rocky to the card size, centre him, soften the glossy materials */
+AFRAME.registerComponent('rocky-fit', {
+  init() {
+    this.el.addEventListener('model-loaded', () => {
+      const obj = this.el.getObject3D('mesh'), parent = obj.parent;
+      obj.traverse(n => {
+        if (n.isMesh && n.material) {
+          (Array.isArray(n.material) ? n.material : [n.material]).forEach(m => {
+            if ('metalness' in m) m.metalness = Math.min(m.metalness, 0.35);
+            if ('roughness' in m) m.roughness = Math.max(m.roughness, 0.4);
+            if ('clearcoat' in m) m.clearcoat = Math.min(m.clearcoat, 0.3);
+            m.needsUpdate = true;
+          });
+        }
+      });
+      const tmp = new THREE.Group(); tmp.add(obj);
+      const box = new THREE.Box3().setFromObject(tmp);
+      parent.add(obj);
+      const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+      const s = CONFIG.size / Math.max(size.x, size.y, size.z);
+      const fit = this.el.parentNode;                       // the #fit wrapper
+      fit.object3D.scale.setScalar(s);
+      fit.object3D.position.copy(c).multiplyScalar(-s);
+    });
+    this.el.addEventListener('model-error', () => {
+      const e = document.getElementById('err');
+      e.style.display = 'flex';
+      e.textContent = 'Could not load ' + CONFIG.model + '. Keep rocky.glb next to index.html with that exact name.';
+    });
+  }
+});
+
+/* the floating text panel: a rounded card drawn on a canvas, fades in and out */
 AFRAME.registerComponent('info-panel', {
   init() {
     const CW = 1024, CH = Math.round(1024 * CONFIG.panelSize[1] / CONFIG.panelSize[0]);
@@ -151,40 +152,52 @@ AFRAME.registerComponent('info-panel', {
     this.el.object3D.visible = this.mat.opacity > 0.01;
   }
 });
+</script>
+</head>
 
-// ---- fit model to card size & centre it, tame materials for plain lighting ----
-const status = document.getElementById('status');
-document.querySelector('#car').addEventListener('model-loaded', () => {
-  const carEl = document.querySelector('#car'), fitEl = document.querySelector('#fit');
-  const obj = carEl.getObject3D('mesh'), parent = obj.parent;
-  obj.traverse(n => {
-    if (n.isMesh && n.material) {
-      const mats = Array.isArray(n.material) ? n.material : [n.material];
-      mats.forEach(m => {
-        if ('metalness' in m) m.metalness = Math.min(m.metalness, 0.35);
-        if ('roughness' in m) m.roughness = Math.max(m.roughness, 0.4);
-        if ('clearcoat' in m) m.clearcoat = Math.min(m.clearcoat, 0.3);
-        m.needsUpdate = true;
-      });
-    }
-  });
-  const tmp = new THREE.Group(); tmp.add(obj);
-  const box = new THREE.Box3().setFromObject(tmp);
-  parent.add(obj);
-  const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
-  const s = CONFIG.size / Math.max(size.x, size.y, size.z);
-  fitEl.object3D.scale.setScalar(s);
-  fitEl.object3D.position.copy(c).multiplyScalar(-s);
-  status.textContent = preview ? 'Preview mode (no camera)' : 'Point your camera at the card';
-  if (preview) setTimeout(() => status.classList.add('hidden'), 2000);
-});
-document.querySelector('#car').addEventListener('model-error', () => {
-  const e = document.getElementById('err');
-  e.style.display = 'flex';
-  e.textContent = 'Could not load ' + CONFIG.model + '. Keep rocky.glb next to index.html with that exact name.';
-});
+<body>
 
-// ---- the hands-free tour: turn Rocky, fade the text in, hold, fade it out, next view ----
+<div id="err"></div>
+
+<a-scene
+  mindar-image="imageTargetSrc: targets.mind; filterMinCF: 0.0001; filterBeta: 0.001;"
+  color-space="sRGB"
+  renderer="colorManagement: true"
+  vr-mode-ui="enabled: false"
+  device-orientation-permission-ui="enabled: false">
+
+  <a-assets timeout="90000">
+    <a-asset-item id="carModel" src="rocky.glb"></a-asset-item>
+  </a-assets>
+
+  <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+  <a-entity light="type: hemisphere; color: #ffffff; groundColor: #8895b0; intensity: 1.3"></a-entity>
+  <a-entity light="type: directional; intensity: 1.7" position="1 2 3"></a-entity>
+  <a-entity light="type: directional; intensity: 0.9" position="-2 -1 2"></a-entity>
+  <a-entity light="type: directional; intensity: 1.6" position="0 0 5"></a-entity>
+
+  <a-entity id="anchor" mindar-image-target="targetIndex: 0">
+
+    <a-entity id="viewer" position="0 0.0 0.35" car-viewer>
+      <a-entity id="fit">
+        <a-gltf-model id="car" src="#carModel" rocky-fit></a-gltf-model>
+      </a-entity>
+    </a-entity>
+
+    <a-entity id="infopanel" info-panel position="1.25 0.1 0.3"></a-entity>
+
+  </a-entity>
+
+</a-scene>
+
+<script>
+/* the lift / panel position come from CONFIG so there is one place to edit */
+document.getElementById('viewer').object3D.position.z = CONFIG.lift;
+document.getElementById('infopanel').object3D.position.set(CONFIG.panelPos[0], CONFIG.panelPos[1], CONFIG.panelPos[2]);
+
+/* ---- the hands-free tour: turn Rocky, fade the text in, hold, fade it out, next view ---- */
+const anchor = document.getElementById('anchor');
 let idx = -1, timers = [], running = false;
 function clearTimers() { timers.forEach(clearTimeout); timers = []; }
 function later(ms, fn) { timers.push(setTimeout(fn, ms)); }
@@ -199,20 +212,15 @@ function goTo(i) {
   later(CONFIG.stopSeconds * 1000, () => goTo(idx + 1));
 }
 function startTour() { if (running) return; running = true; goTo(0); }
-document.addEventListener('click', () => { if (running) goTo(idx + 1); });            // tap = next view
-document.addEventListener('keydown', e => { if (!running) return; if (e.key === 'ArrowRight') goTo(idx + 1); if (e.key === 'ArrowLeft') goTo(idx - 1); });
 
-// ---- scene ready ----
-document.querySelector('a-scene').addEventListener('loaded', () => {
-  if (preview) { startTour(); return; }
-  const anchor = document.getElementById('anchor');
-  anchor.addEventListener('targetFound', () => { status.classList.add('hidden'); startTour(); });
-  anchor.addEventListener('targetLost',  () => { status.textContent = 'Point your camera at the card'; status.classList.remove('hidden'); });
-});
+anchor.addEventListener('targetFound', startTour);
+document.addEventListener('click', () => { if (running) goTo(idx + 1); });   // tap = next view
+
 document.querySelector('a-scene').addEventListener('arError', () => {
   const e = document.getElementById('err'); e.style.display = 'flex';
-  e.textContent = 'Camera could not start. Allow camera access and open this page over HTTPS.';
+  e.textContent = 'Camera could not start. Allow camera access and open this page over HTTPS (not inside WhatsApp/Instagram: open it in Chrome or Safari).';
 });
 </script>
+
 </body>
 </html>
