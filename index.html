@@ -7,7 +7,8 @@
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
-  html,body { margin:0; height:100%; overflow:hidden; background:#000; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  html { background:#000; }   /* NOT on body: MindAR camera video sits behind the body, a body background would hide it */
+  html,body { margin:0; height:100%; overflow:hidden; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
   #status { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:10000;
     background:rgba(9,14,32,.9); color:#f2f5fa; padding:8px 16px; border-radius:20px; font-size:14px;
     border:1px solid #ff6a00; transition:opacity .3s; pointer-events:none; white-space:nowrap; }
