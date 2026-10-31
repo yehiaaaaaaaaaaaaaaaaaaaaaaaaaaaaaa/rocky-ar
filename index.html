@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Rocky AR Tour</title>
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+<style>
+  html,body { margin:0; height:100%; overflow:hidden; background:#000; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  #status { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:10000;
+    background:rgba(9,14,32,.9); color:#f2f5fa; padding:8px 16px; border-radius:20px; font-size:14px;
+    border:1px solid #ff6a00; transition:opacity .3s; pointer-events:none; white-space:nowrap; }
+  #status.hidden { opacity:0; }
+  #err { position:fixed; inset:0; z-index:20000; display:none; align-items:center; justify-content:center; text-align:center;
+    background:#0a101e; color:#fff; padding:24px; font-size:16px; }
+</style>
+</head>
+<body>
+
+<div id="err"></div>
+<div id="status">Loading Rocky...</div>
+
+<script>
+/* =====================================================================
+   EDIT THIS SECTION
+   ===================================================================== */
+const CONFIG = {
+  model: 'rocky.glb',        // optimised RB19 model (7 MB)
+  target: 'targets.mind',    // compiled from card.png - do not change card.png after compiling
+  // Axes of THIS model file (checked): nose points to +Z, up is +Y.
+  modelUp:      [0, 1, 0],
+  modelForward: [0, 0, 1],
+  size: 1.35,                // Rocky's length in card widths (the card is 1 wide, 1.4 tall)
+  lift: 0.35,                // how high Rocky floats above the card
+  panelPos: [1.2, 0.1, 0.3], // where the text panel floats: [right of card centre, up, out]
+  panelSize: [0.9, 0.7],    // panel width, height (card widths)
+  stopSeconds: 10,           // time on each view
+  turnSeconds: 1.2           // time Rocky takes to turn before the text fades in
+};
+
+// The tour plays in this order. Tap the screen to skip ahead.
+// face: 'front' | 'left' (side) | 'bottom' | 'back' | 'top' | 'right' | 'iso'
+const VIEWS = [
+  { face:'front', title:'FRONT VIEW',
+    text:'Rocky’s front wing meets the air first. Its stacked flaps press the front tyres into the track, while the endplates push the messy air from the spinning tyres around the sides, keeping the air behind it clean. The narrow nose keeps drag low.' },
+  { face:'left', title:'SIDE VIEW',
+    text:'Rocky’s sidepods hold the radiators and are cut away underneath, so clean air can flow beneath them. The top of each sidepod slopes steeply toward the rear, guiding air onto the back of the car and the rear wing.' },
+  { face:'bottom', title:'BOTTOM VIEW',
+    text:'The floor is Rocky’s secret weapon. Two big tunnels squeeze and speed up the air under the car, creating low pressure that sucks it to the track. The diffuser at the back lets that air slow down smoothly, so the suction keeps working.' },
+  { face:'back', title:'REAR VIEW',
+    text:'Rocky’s rear wing makes downforce over the rear tyres for grip out of corners. On straights the driver opens the DRS flap to cut drag. Just below, the diffuser exit and the wing work together to keep the airflow clean.' },
+  { face:'top', title:'TOP VIEW',
+    text:'From above, Rocky is shaped like a bottle: wide at the front wing, narrow at the waist, wide again over the rear tyres. That narrow waist lets air squeeze past and tuck around the rear tyres. Every part feeds the next.' }
+];
+/* ===================================================================== */
+
+const preview = new URLSearchParams(location.search).has('preview');
+
+// ---- build scene (AR normally, plain 3D with ?preview for desktop testing) ----
+const sceneOpen = preview
+  ? '<a-scene vr-mode-ui="enabled:false" renderer="colorManagement:true" device-orientation-permission-ui="enabled:false" background="color:#10182b">'
+  : '<a-scene mindar-image="imageTargetSrc:' + CONFIG.target + '; filterMinCF:0.0001; filterBeta:0.001; uiScanning:no; uiLoading:no" ' +
+    'color-space="sRGB" renderer="colorManagement:true" vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:false">';
+const anchorOpen = preview ? '<a-entity id="anchor" position="-0.55 0 -2.9">' : '<a-entity id="anchor" mindar-image-target="targetIndex:0">';
+document.body.insertAdjacentHTML('afterbegin',
+  sceneOpen +
+    '<a-camera position="0 0 0" look-controls="enabled:false" wasd-controls="enabled:false"></a-camera>' +
+    '<a-entity light="type:hemisphere; color:#ffffff; groundColor:#8895b0; intensity:1.3"></a-entity>' +
+    '<a-entity light="type:directional; intensity:1.7" position="1 2 3"></a-entity>' +
+    '<a-entity light="type:directional; intensity:0.9" position="-2 -1 2"></a-entity>' +
+    '<a-entity light="type:directional; intensity:1.6" position="0 0 5"></a-entity>' +   // headlight: lights whichever side faces you (the dark underside)
+    anchorOpen +
+      '<a-entity id="viewer" position="0 0 ' + CONFIG.lift + '" car-viewer>' +
+        '<a-entity id="fit"><a-gltf-model id="car" src="' + CONFIG.model + '"></a-gltf-model></a-entity>' +
+      '</a-entity>' +
+      '<a-entity id="infopanel" info-panel position="' + CONFIG.panelPos.join(' ') + '"></a-entity>' +
+    '</a-entity>' +
+  '</a-scene>');
+
+// ---- view orientation maths ----
+function viewQuat(face) {
+  const V = (a) => new THREE.Vector3(a[0], a[1], a[2]).normalize();
+  const U = V(CONFIG.modelUp), F = V(CONFIG.modelForward);
+  const L = new THREE.Vector3().crossVectors(U, F).normalize();   // Rocky's left side
+  let f, u = U.clone();
+  switch (face) {
+    case 'top':    f = U.clone();           u = F.clone(); break; // nose points up the card
+    case 'bottom': f = U.clone().negate();  u = F.clone(); break;
+    case 'front':  f = F.clone(); break;
+    case 'back':   f = F.clone().negate(); break;
+    case 'left':   f = L.clone(); break;
+    case 'right':  f = L.clone().negate(); break;
+    default:       f = new THREE.Vector3().addScaledVector(U, .55).addScaledVector(F, .6).addScaledVector(L, .6).normalize();
+  }
+  u.sub(f.clone().multiplyScalar(u.dot(f))).normalize();
+  const x = new THREE.Vector3().crossVectors(u, f);
+  const m = new THREE.Matrix4().makeBasis(x, u, f);   // world axes expressed in model space
+  return new THREE.Quaternion().setFromRotationMatrix(m).invert();
+}
+
+AFRAME.registerComponent('car-viewer', {
+  init() {
+    this.goal = viewQuat(VIEWS[0].face);
+    this.el.object3D.quaternion.copy(this.goal);
+    window.setViewFace = (face) => { this.goal = viewQuat(face); };
+  },
+  tick(t, dt) {
+    const k = 1 - Math.exp(-(dt / 1000) * 4);
+    this.el.object3D.quaternion.slerp(this.goal, k);
+  }
+});
+
+// ---- the floating text panel (a rounded card drawn on a canvas, fades in and out) ----
+AFRAME.registerComponent('info-panel', {
+  init() {
+    const CW = 1024, CH = Math.round(1024 * CONFIG.panelSize[1] / CONFIG.panelSize[0]);
+    const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH;
+    this.cv = cv; this.ctx = cv.getContext('2d');
+    this.tex = new THREE.CanvasTexture(cv);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.panelSize[0], CONFIG.panelSize[1]), this.mat);
+    mesh.renderOrder = 10;
+    this.el.setObject3D('mesh', mesh);
+    this.target = 0;
+    window.setPanel = (title, text) => this.draw(title, text);
+    window.fadePanel = (on) => { this.target = on ? 1 : 0; };
+  },
+  draw(title, text) {
+    const c = this.ctx, W = this.cv.width, H = this.cv.height, r = 56;
+    c.clearRect(0, 0, W, H);
+    c.fillStyle = 'rgba(24,30,50,0.94)';
+    c.beginPath(); c.moveTo(r, 0); c.arcTo(W, 0, W, H, r); c.arcTo(W, H, 0, H, r); c.arcTo(0, H, 0, 0, r); c.arcTo(0, 0, W, 0, r); c.closePath(); c.fill();
+    c.strokeStyle = '#ff6a00'; c.lineWidth = 6; c.stroke();
+    c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+    c.fillStyle = '#ffc428'; c.font = '600 40px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+    c.fillText(title.split('').join(' '), W / 2, 100);
+    c.fillStyle = '#f2f5fa'; c.font = '400 43px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+    const maxW = W - 120, words = text.split(' '), lines = []; let line = '';
+    words.forEach(w => { const t = line ? line + ' ' + w : w; if (c.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t; });
+    lines.push(line);
+    const lh = 58, total = lines.length * lh, top = 160 + Math.max(0, (H - 160 - 50 - total) / 2);
+    lines.forEach((l, i) => c.fillText(l, W / 2, top + (i + 0.8) * lh));
+    this.tex.needsUpdate = true;
+  },
+  tick(t, dt) {
+    const o = this.mat.opacity, k = 1 - Math.exp(-(dt / 1000) * 5);
+    this.mat.opacity = o + (this.target - o) * k;
+    this.el.object3D.visible = this.mat.opacity > 0.01;
+  }
+});
+
+// ---- fit model to card size & centre it, tame materials for plain lighting ----
+const status = document.getElementById('status');
+document.querySelector('#car').addEventListener('model-loaded', () => {
+  const carEl = document.querySelector('#car'), fitEl = document.querySelector('#fit');
+  const obj = carEl.getObject3D('mesh'), parent = obj.parent;
+  obj.traverse(n => {
+    if (n.isMesh && n.material) {
+      const mats = Array.isArray(n.material) ? n.material : [n.material];
+      mats.forEach(m => {
+        if ('metalness' in m) m.metalness = Math.min(m.metalness, 0.35);
+        if ('roughness' in m) m.roughness = Math.max(m.roughness, 0.4);
+        if ('clearcoat' in m) m.clearcoat = Math.min(m.clearcoat, 0.3);
+        m.needsUpdate = true;
+      });
+    }
+  });
+  const tmp = new THREE.Group(); tmp.add(obj);
+  const box = new THREE.Box3().setFromObject(tmp);
+  parent.add(obj);
+  const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  const s = CONFIG.size / Math.max(size.x, size.y, size.z);
+  fitEl.object3D.scale.setScalar(s);
+  fitEl.object3D.position.copy(c).multiplyScalar(-s);
+  status.textContent = preview ? 'Preview mode (no camera)' : 'Point your camera at the card';
+  if (preview) setTimeout(() => status.classList.add('hidden'), 2000);
+});
+document.querySelector('#car').addEventListener('model-error', () => {
+  const e = document.getElementById('err');
+  e.style.display = 'flex';
+  e.textContent = 'Could not load ' + CONFIG.model + '. Keep rocky.glb next to index.html with that exact name.';
+});
+
+// ---- the hands-free tour: turn Rocky, fade the text in, hold, fade it out, next view ----
+let idx = -1, timers = [], running = false;
+function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+function later(ms, fn) { timers.push(setTimeout(fn, ms)); }
+function goTo(i) {
+  clearTimers();
+  idx = (i + VIEWS.length) % VIEWS.length;
+  const v = VIEWS[idx];
+  window.fadePanel(false);
+  window.setViewFace(v.face);
+  later(CONFIG.turnSeconds * 1000 * 0.7, () => { window.setPanel(v.title, v.text); window.fadePanel(true); });
+  later((CONFIG.stopSeconds - 1.3) * 1000, () => window.fadePanel(false));
+  later(CONFIG.stopSeconds * 1000, () => goTo(idx + 1));
+}
+function startTour() { if (running) return; running = true; goTo(0); }
+document.addEventListener('click', () => { if (running) goTo(idx + 1); });            // tap = next view
+document.addEventListener('keydown', e => { if (!running) return; if (e.key === 'ArrowRight') goTo(idx + 1); if (e.key === 'ArrowLeft') goTo(idx - 1); });
+
+// ---- scene ready ----
+document.querySelector('a-scene').addEventListener('loaded', () => {
+  if (preview) { startTour(); return; }
+  const anchor = document.getElementById('anchor');
+  anchor.addEventListener('targetFound', () => { status.classList.add('hidden'); startTour(); });
+  anchor.addEventListener('targetLost',  () => { status.textContent = 'Point your camera at the card'; status.classList.remove('hidden'); });
+});
+document.querySelector('a-scene').addEventListener('arError', () => {
+  const e = document.getElementById('err'); e.style.display = 'flex';
+  e.textContent = 'Camera could not start. Allow camera access and open this page over HTTPS.';
+});
+</script>
+</body>
+</html>
