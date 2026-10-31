@@ -1,225 +1,923 @@
 <!DOCTYPE html>
+
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+```
 <title>Rocky AR Tour</title>
 
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
 <style>
-  /* Same as the known-working page: NO background on html/body, or the camera video (z-index -2) is hidden. */
-  body { margin: 0; overflow: hidden; }
-  #err { position:fixed; inset:0; z-index:20000; display:none; align-items:center; justify-content:center; text-align:center;
-         background:#0a101e; color:#fff; padding:24px; font:16px system-ui, sans-serif; }
+    body {
+        margin: 0;
+        overflow: hidden;
+    }
 </style>
+```
 
-<script>
-/* =====================================================================
-   EDIT THIS SECTION
-   ===================================================================== */
-const CONFIG = {
-  model: 'rocky.glb',
-  // Axes of THIS model file (checked): nose points to +Z, up is +Y.
-  modelUp:      [0, 1, 0],
-  modelForward: [0, 0, 1],
-  size: 1.35,                // Rocky's length in card widths (the card is 1 wide, 1.4 tall)
-  lift: 0.35,                // how high Rocky floats above the card
-  panelPos: [1.2, 0.1, 0.3], // where the text panel floats: [right of card centre, up, out]
-  panelSize: [0.85, 0.66],   // panel width, height (card widths)
-  stopSeconds: 10,           // time on each view
-  turnSeconds: 1.2           // time Rocky takes to turn before the text fades in
-};
-
-// face: 'front' | 'left' (side) | 'bottom' | 'back' | 'top' | 'right' | 'iso'
-const VIEWS = [
-  { face:'front', title:'FRONT VIEW',
-    text:'Rocky’s front wing meets the air first. Its stacked flaps press the front tyres into the track, while the endplates push the messy air from the spinning tyres around the sides, keeping the air behind it clean. The narrow nose keeps drag low.' },
-  { face:'left', title:'SIDE VIEW',
-    text:'Rocky’s sidepods hold the radiators and are cut away underneath, so clean air can flow beneath them. The top of each sidepod slopes steeply toward the rear, guiding air onto the back of the car and the rear wing.' },
-  { face:'bottom', title:'BOTTOM VIEW',
-    text:'The floor is Rocky’s secret weapon. Two big tunnels squeeze and speed up the air under the car, creating low pressure that sucks it to the track. The diffuser at the back lets that air slow down smoothly, so the suction keeps working.' },
-  { face:'back', title:'REAR VIEW',
-    text:'Rocky’s rear wing makes downforce over the rear tyres for grip out of corners. On straights the driver opens the DRS flap to cut drag. Just below, the diffuser exit and the wing work together to keep the airflow clean.' },
-  { face:'top', title:'TOP VIEW',
-    text:'From above, Rocky is shaped like a bottle: wide at the front wing, narrow at the waist, wide again over the rear tyres. That narrow waist lets air squeeze past and tuck around the rear tyres. Every part feeds the next.' }
-];
-/* ===================================================================== */
-
-/* ---- orientation maths: which way to turn Rocky for each view ---- */
-function viewQuat(face) {
-  const V = (a) => new THREE.Vector3(a[0], a[1], a[2]).normalize();
-  const U = V(CONFIG.modelUp), F = V(CONFIG.modelForward);
-  const L = new THREE.Vector3().crossVectors(U, F).normalize();   // Rocky's left side
-  let f, u = U.clone();
-  switch (face) {
-    case 'top':    f = U.clone();           u = F.clone(); break; // nose points up the card
-    case 'bottom': f = U.clone().negate();  u = F.clone(); break;
-    case 'front':  f = F.clone(); break;
-    case 'back':   f = F.clone().negate(); break;
-    case 'left':   f = L.clone(); break;
-    case 'right':  f = L.clone().negate(); break;
-    default:       f = new THREE.Vector3().addScaledVector(U, .55).addScaledVector(F, .6).addScaledVector(L, .6).normalize();
-  }
-  u.sub(f.clone().multiplyScalar(u.dot(f))).normalize();
-  const x = new THREE.Vector3().crossVectors(u, f);
-  const m = new THREE.Matrix4().makeBasis(x, u, f);
-  return new THREE.Quaternion().setFromRotationMatrix(m).invert();
-}
-
-/* Components are registered here in the head, BEFORE the scene is parsed, so they are always ready. */
-AFRAME.registerComponent('car-viewer', {
-  init() {
-    this.goal = viewQuat(VIEWS[0].face);
-    this.el.object3D.quaternion.copy(this.goal);
-    window.setViewFace = (face) => { this.goal = viewQuat(face); };
-  },
-  tick(t, dt) {
-    const k = 1 - Math.exp(-(dt / 1000) * 4);
-    this.el.object3D.quaternion.slerp(this.goal, k);
-  }
-});
-
-/* fit Rocky to the card size, centre him, soften the glossy materials */
-AFRAME.registerComponent('rocky-fit', {
-  init() {
-    this.el.addEventListener('model-loaded', () => {
-      const obj = this.el.getObject3D('mesh'), parent = obj.parent;
-      obj.traverse(n => {
-        if (n.isMesh && n.material) {
-          (Array.isArray(n.material) ? n.material : [n.material]).forEach(m => {
-            if ('metalness' in m) m.metalness = Math.min(m.metalness, 0.35);
-            if ('roughness' in m) m.roughness = Math.max(m.roughness, 0.4);
-            if ('clearcoat' in m) m.clearcoat = Math.min(m.clearcoat, 0.3);
-            m.needsUpdate = true;
-          });
-        }
-      });
-      const tmp = new THREE.Group(); tmp.add(obj);
-      const box = new THREE.Box3().setFromObject(tmp);
-      parent.add(obj);
-      const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
-      const s = CONFIG.size / Math.max(size.x, size.y, size.z);
-      const fit = this.el.parentNode;                       // the #fit wrapper
-      fit.object3D.scale.setScalar(s);
-      fit.object3D.position.copy(c).multiplyScalar(-s);
-    });
-    this.el.addEventListener('model-error', () => {
-      const e = document.getElementById('err');
-      e.style.display = 'flex';
-      e.textContent = 'Could not load ' + CONFIG.model + '. Keep rocky.glb next to index.html with that exact name.';
-    });
-  }
-});
-
-/* the floating text panel: a rounded card drawn on a canvas, fades in and out */
-AFRAME.registerComponent('info-panel', {
-  init() {
-    const CW = 1024, CH = Math.round(1024 * CONFIG.panelSize[1] / CONFIG.panelSize[0]);
-    const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH;
-    this.cv = cv; this.ctx = cv.getContext('2d');
-    this.tex = new THREE.CanvasTexture(cv);
-    this.tex.colorSpace = THREE.SRGBColorSpace;
-    this.mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.panelSize[0], CONFIG.panelSize[1]), this.mat);
-    mesh.renderOrder = 10;
-    this.el.setObject3D('mesh', mesh);
-    this.target = 0;
-    window.setPanel = (title, text) => this.draw(title, text);
-    window.fadePanel = (on) => { this.target = on ? 1 : 0; };
-  },
-  draw(title, text) {
-    const c = this.ctx, W = this.cv.width, H = this.cv.height, r = 56;
-    c.clearRect(0, 0, W, H);
-    c.fillStyle = 'rgba(24,30,50,0.94)';
-    c.beginPath(); c.moveTo(r, 0); c.arcTo(W, 0, W, H, r); c.arcTo(W, H, 0, H, r); c.arcTo(0, H, 0, 0, r); c.arcTo(0, 0, W, 0, r); c.closePath(); c.fill();
-    c.strokeStyle = '#ff6a00'; c.lineWidth = 6; c.stroke();
-    c.textAlign = 'center'; c.textBaseline = 'alphabetic';
-    c.fillStyle = '#ffc428'; c.font = '600 40px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-    c.fillText(title.split('').join(' '), W / 2, 100);
-    c.fillStyle = '#f2f5fa'; c.font = '400 43px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-    const maxW = W - 120, words = text.split(' '), lines = []; let line = '';
-    words.forEach(w => { const t = line ? line + ' ' + w : w; if (c.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t; });
-    lines.push(line);
-    const lh = 58, total = lines.length * lh, top = 160 + Math.max(0, (H - 160 - 50 - total) / 2);
-    lines.forEach((l, i) => c.fillText(l, W / 2, top + (i + 0.8) * lh));
-    this.tex.needsUpdate = true;
-  },
-  tick(t, dt) {
-    const o = this.mat.opacity, k = 1 - Math.exp(-(dt / 1000) * 5);
-    this.mat.opacity = o + (this.target - o) * k;
-    this.el.object3D.visible = this.mat.opacity > 0.01;
-  }
-});
-</script>
 </head>
 
 <body>
 
-<div id="err"></div>
-
 <a-scene
-  mindar-image="imageTargetSrc: targets.mind; filterMinCF: 0.0001; filterBeta: 0.001;"
-  color-space="sRGB"
-  renderer="colorManagement: true"
-  vr-mode-ui="enabled: false"
-  device-orientation-permission-ui="enabled: false">
+ mindar-image="imageTargetSrc: targets.mind;"
+ color-space="sRGB"
+ renderer="
+     colorManagement: true,
+     physicallyCorrectLights
+ "
+ vr-mode-ui="enabled: false"
+ device-orientation-permission-ui="enabled: false">
 
-  <a-assets timeout="90000">
-    <a-asset-item id="carModel" src="rocky.glb"></a-asset-item>
-  </a-assets>
+```
+<a-assets>
 
-  <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+    <a-asset-item
+        id="carModel"
+        src="rocky.glb">
+    </a-asset-item>
 
-  <a-entity light="type: hemisphere; color: #ffffff; groundColor: #8895b0; intensity: 1.3"></a-entity>
-  <a-entity light="type: directional; intensity: 1.7" position="1 2 3"></a-entity>
-  <a-entity light="type: directional; intensity: 0.9" position="-2 -1 2"></a-entity>
-  <a-entity light="type: directional; intensity: 1.6" position="0 0 5"></a-entity>
+    <!-- Rounded navy panel -->
+    <img
+        id="panelTexture"
+        src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='700'%3E%3Crect x='8' y='8' width='784' height='684' rx='55' fill='%230B1F3A'/%3E%3C/svg%3E">
 
-  <a-entity id="anchor" mindar-image-target="targetIndex: 0">
+</a-assets>
 
-    <a-entity id="viewer" position="0 0.0 0.35" car-viewer>
-      <a-entity id="fit">
-        <a-gltf-model id="car" src="#carModel" rocky-fit></a-gltf-model>
-      </a-entity>
+
+<a-camera
+    position="0 0 0"
+    look-controls="enabled: false">
+</a-camera>
+
+
+<a-entity mindar-image-target="targetIndex: 0">
+
+
+    <!-- =====================================================
+         CAR
+         ===================================================== -->
+
+    <a-entity id="carRotation">
+
+        <a-gltf-model
+            id="carModelAR"
+            src="#carModel"
+            position="0 -0.2265 -0.2415"
+            rotation="-90 180 0"
+            scale="0.6 0.6 0.6">
+        </a-gltf-model>
+
     </a-entity>
 
-    <a-entity id="infopanel" info-panel position="1.25 0.1 0.3"></a-entity>
 
-  </a-entity>
+    <!-- =====================================================
+         TOP TEXT BOX
+         ===================================================== -->
+
+    <a-entity
+        id="topBox"
+        visible="false"
+        position="2.45 0.85 0.5">
+
+        <a-plane
+            class="panelBackground"
+            width="2.45"
+            height="2.15"
+            src="#panelTexture"
+            material="transparent: true; opacity: 0">
+        </a-plane>
+
+        <a-text
+            class="panelText"
+            value="TOP VIEW"
+            align="center"
+            width="3.2"
+            color="#FFFFFF"
+            opacity="0"
+            position="0 0.72 0.03">
+        </a-text>
+
+        <a-text
+            class="panelText"
+            value="From above, Rocky is shaped like a bottle: wide at the front wing, narrow at the waist, then wide again over the rear tyres. The narrow waist lets air squeeze past and tuck in around the rear tyres."
+            align="center"
+            anchor="center"
+            baseline="center"
+            width="2.35"
+            wrap-count="27"
+            color="#FFFFFF"
+            opacity="0"
+            position="0 -0.05 0.03">
+        </a-text>
+
+    </a-entity>
+
+
+    <!-- =====================================================
+         BOTTOM TEXT BOX
+         ===================================================== -->
+
+    <a-entity
+        id="bottomBox"
+        visible="false"
+        position="2.45 0.85 0.5">
+
+        <a-plane
+            class="panelBackground"
+            width="2.45"
+            height="2.15"
+            src="#panelTexture"
+            material="transparent: true; opacity: 0">
+        </a-plane>
+
+        <a-text
+            class="panelText"
+            value="BOTTOM VIEW"
+            align="center"
+            width="3.2"
+            color="#FFFFFF"
+            opacity="0"
+            position="0 0.72 0.03">
+        </a-text>
+
+        <a-text
+            class="panelText"
+            value="The floor is Rocky's secret weapon: two big tunnels speed up the air underneath, creating low pressure that sucks the car to the track. The diffuser at the back lets that air slow down smoothly."
+            align="center"
+            anchor="center"
+            baseline="center"
+            width="2.35"
+            wrap-count="27"
+            color="#FFFFFF"
+            opacity="0"
+            position="0 -0.05 0.03">
+        </a-text>
+
+    </a-entity>
+
+
+    <!-- =====================================================
+         FRONT TEXT BOX
+         ===================================================== -->
+
+    <a-entity
+        id="frontBox"
+        visible="false"
+        position="2.45 0.85 0.5">
+
+        <a-plane
+            class="panelBackground"
+            width="2.45"
+            height="2.15"
+            src="#panelTexture"
+            material="transparent: true; opacity: 0">
+        </a-plane>
+
+        <a-text
+            class="panelText"
+            value="FRONT VIEW"
+            align="center"
+            width="3.2"
+            color="#FFFFFF"
+            opacity="0"
+            position="0 0.72 0.03">
+        </a-text>
+
+        <a-text
+            class="panelText"
+            value="Rocky's front wing meets the air first. Its stacked flaps press the front tyres into the track, while the endplates push the messy tyre air around the sides to keep the air behind it clean."
+            align="center"
+            anchor="center"
+            baseline="center"
+            width="2.35"
+            wrap-count="27"
+            color="#FFFFFF"
+            opacity="0"
+            position="0 -0.05 0.03">
+        </a-text>
+
+    </a-entity>
+
+
+    <!-- =====================================================
+         SIDE TEXT BOX
+         ===================================================== -->
+
+    <a-entity
+        id="sideBox"
+        visible="false"
+        position="2.45 0.85 0.5">
+
+        <a-plane
+            class="panelBackground"
+            width="2.45"
+            height="2.15"
+            src="#panelTexture"
+            material="transparent: true; opacity: 0">
+        </a-plane>
+
+        <a-text
+            class="panelText"
+            value="SIDE VIEW"
+            align="center"
+            width="3.2"
+            color="#FFFFFF"
+            opacity="0"
+            position="0 0.72 0.03">
+        </a-text>
+
+        <a-text
+            class="panelText"
+            value="Rocky's sidepods hold the radiators and are cut away underneath so clean air flows beneath them. Their tops slope steeply to the rear, guiding air onto the back of the car and the rear wing."
+            align="center"
+            anchor="center"
+            baseline="center"
+            width="2.35"
+            wrap-count="27"
+            color="#FFFFFF"
+            opacity="0"
+            position="0 -0.05 0.03">
+        </a-text>
+
+    </a-entity>
+
+
+    <!-- =====================================================
+         REAR TEXT BOX
+         ===================================================== -->
+
+    <a-entity
+        id="backBox"
+        visible="false"
+        position="2.45 0.85 0.5">
+
+        <a-plane
+            class="panelBackground"
+            width="2.45"
+            height="2.15"
+            src="#panelTexture"
+            material="transparent: true; opacity: 0">
+        </a-plane>
+
+        <a-text
+            class="panelText"
+            value="REAR VIEW"
+            align="center"
+            width="3.2"
+            color="#FFFFFF"
+            opacity="0"
+            position="0 0.72 0.03">
+        </a-text>
+
+        <a-text
+            class="panelText"
+            value="Rocky's rear wing makes downforce over the rear tyres for grip out of corners, and the driver can open the DRS flap on straights to cut drag. The diffuser below keeps the airflow leaving the car clean."
+            align="center"
+            anchor="center"
+            baseline="center"
+            width="2.35"
+            wrap-count="27"
+            color="#FFFFFF"
+            opacity="0"
+            position="0 -0.05 0.03">
+        </a-text>
+
+    </a-entity>
+
+
+</a-entity>
+```
 
 </a-scene>
 
 <script>
-/* the lift / panel position come from CONFIG so there is one place to edit */
-document.getElementById('viewer').object3D.position.z = CONFIG.lift;
-document.getElementById('infopanel').object3D.position.set(CONFIG.panelPos[0], CONFIG.panelPos[1], CONFIG.panelPos[2]);
 
-/* ---- the hands-free tour: turn Rocky, fade the text in, hold, fade it out, next view ---- */
-const anchor = document.getElementById('anchor');
-let idx = -1, timers = [], running = false;
-function clearTimers() { timers.forEach(clearTimeout); timers = []; }
-function later(ms, fn) { timers.push(setTimeout(fn, ms)); }
-function goTo(i) {
-  clearTimers();
-  idx = (i + VIEWS.length) % VIEWS.length;
-  const v = VIEWS[idx];
-  window.fadePanel(false);
-  window.setViewFace(v.face);
-  later(CONFIG.turnSeconds * 1000 * 0.7, () => { window.setPanel(v.title, v.text); window.fadePanel(true); });
-  later((CONFIG.stopSeconds - 1.3) * 1000, () => window.fadePanel(false));
-  later(CONFIG.stopSeconds * 1000, () => goTo(idx + 1));
+
+/* =========================================================
+   ELEMENTS
+   ========================================================= */
+
+const carRotation =
+    document.querySelector("#carRotation");
+
+const target =
+    document.querySelector("[mindar-image-target]");
+
+const topBox =
+    document.querySelector("#topBox");
+
+const bottomBox =
+    document.querySelector("#bottomBox");
+
+const frontBox =
+    document.querySelector("#frontBox");
+
+const sideBox =
+    document.querySelector("#sideBox");
+
+const backBox =
+    document.querySelector("#backBox");
+
+
+let tourStarted = false;
+
+
+/* =========================================================
+   SET OPACITY
+   ========================================================= */
+
+function setBoxOpacity(box, opacity) {
+
+    const background =
+        box.querySelector(".panelBackground");
+
+    const textElements =
+        box.querySelectorAll(".panelText");
+
+
+    if (background) {
+
+        background.setAttribute(
+            "material",
+            {
+                transparent: true,
+                opacity: opacity
+            }
+        );
+
+    }
+
+
+    textElements.forEach(text => {
+
+        text.setAttribute(
+            "opacity",
+            opacity
+        );
+
+    });
+
 }
-function startTour() { if (running) return; running = true; goTo(0); }
 
-anchor.addEventListener('targetFound', startTour);
-document.addEventListener('click', () => { if (running) goTo(idx + 1); });   // tap = next view
 
-document.querySelector('a-scene').addEventListener('arError', () => {
-  const e = document.getElementById('err'); e.style.display = 'flex';
-  e.textContent = 'Camera could not start. Allow camera access and open this page over HTTPS (not inside WhatsApp/Instagram: open it in Chrome or Safari).';
-});
+/* =========================================================
+   FADE IN
+   ========================================================= */
+
+function fadeIn(box, duration = 700) {
+
+    box.setAttribute(
+        "visible",
+        true
+    );
+
+    setBoxOpacity(
+        box,
+        0
+    );
+
+
+    const background =
+        box.querySelector(".panelBackground");
+
+    const textElements =
+        box.querySelectorAll(".panelText");
+
+
+    if (background) {
+
+        background.setAttribute(
+            "animation__fadein",
+            {
+                property: "material.opacity",
+                from: 0,
+                to: 1,
+                dur: duration,
+                easing: "easeInOutQuad"
+            }
+        );
+
+    }
+
+
+    textElements.forEach(text => {
+
+        text.setAttribute(
+            "animation__fadein",
+            {
+                property: "opacity",
+                from: 0,
+                to: 1,
+                dur: duration,
+                easing: "easeInOutQuad"
+            }
+        );
+
+    });
+
+}
+
+
+/* =========================================================
+   FADE OUT
+   ========================================================= */
+
+function fadeOut(box, duration = 600) {
+
+    return new Promise(resolve => {
+
+        if (
+            box.getAttribute("visible") !== true
+        ) {
+
+            resolve();
+            return;
+
+        }
+
+
+        const background =
+            box.querySelector(".panelBackground");
+
+        const textElements =
+            box.querySelectorAll(".panelText");
+
+
+        let elements =
+            [];
+
+        if (background) {
+            elements.push(background);
+        }
+
+        textElements.forEach(text => {
+            elements.push(text);
+        });
+
+
+        let finished = 0;
+
+
+        function finishedOne() {
+
+            finished++;
+
+            if (
+                finished === elements.length
+            ) {
+
+                box.setAttribute(
+                    "visible",
+                    false
+                );
+
+                setBoxOpacity(
+                    box,
+                    0
+                );
+
+                resolve();
+
+            }
+
+        }
+
+
+        if (elements.length === 0) {
+
+            box.setAttribute(
+                "visible",
+                false
+            );
+
+            resolve();
+
+            return;
+
+        }
+
+
+        if (background) {
+
+            background.setAttribute(
+                "animation__fadeout",
+                {
+                    property: "material.opacity",
+                    from: 1,
+                    to: 0,
+                    dur: duration,
+                    easing: "easeInOutQuad"
+                }
+            );
+
+            background.addEventListener(
+                "animationcomplete__fadeout",
+                finishedOne,
+                {
+                    once: true
+                }
+            );
+
+        }
+
+
+        textElements.forEach(text => {
+
+            text.setAttribute(
+                "animation__fadeout",
+                {
+                    property: "opacity",
+                    from: 1,
+                    to: 0,
+                    dur: duration,
+                    easing: "easeInOutQuad"
+                }
+            );
+
+            text.addEventListener(
+                "animationcomplete__fadeout",
+                finishedOne,
+                {
+                    once: true
+                }
+            );
+
+        });
+
+    });
+
+}
+
+
+/* =========================================================
+   HIDE ALL BOXES
+   ========================================================= */
+
+async function hideAllBoxes() {
+
+    const boxes = [
+        topBox,
+        bottomBox,
+        frontBox,
+        sideBox,
+        backBox
+    ];
+
+
+    for (const box of boxes) {
+
+        if (
+            box.getAttribute("visible") === true
+        ) {
+
+            await fadeOut(
+                box,
+                500
+            );
+
+        } else {
+
+            box.setAttribute(
+                "visible",
+                false
+            );
+
+            setBoxOpacity(
+                box,
+                0
+            );
+
+        }
+
+    }
+
+}
+
+
+/* =========================================================
+   SHOW ONE BOX
+   ========================================================= */
+
+async function showBox(box) {
+
+    await hideAllBoxes();
+
+    fadeIn(
+        box,
+        700
+    );
+
+}
+
+
+/* =========================================================
+   TARGET FOUND
+   ========================================================= */
+
+target.addEventListener(
+    "targetFound",
+    () => {
+
+        if (tourStarted) {
+            return;
+        }
+
+        tourStarted = true;
+
+        startTour();
+
+    }
+);
+
+
+/* =========================================================
+   ROTATION
+   ========================================================= */
+
+function rotateTo(
+    x,
+    y,
+    z,
+    duration
+) {
+
+    return new Promise(resolve => {
+
+        const start =
+            carRotation.getAttribute(
+                "rotation"
+            );
+
+
+        const startX =
+            start.x;
+
+        const startY =
+            start.y;
+
+        const startZ =
+            start.z;
+
+
+        const startTime =
+            performance.now();
+
+
+        function animate(time) {
+
+            const progress =
+                Math.min(
+                    (time - startTime) /
+                    duration,
+                    1
+                );
+
+
+            const eased =
+                progress < 0.5
+                    ? 2 *
+                      progress *
+                      progress
+
+                    : 1 -
+                      Math.pow(
+                          -2 *
+                          progress +
+                          2,
+                          2
+                      ) /
+                      2;
+
+
+            const currentX =
+                startX +
+                (x - startX) *
+                eased;
+
+
+            const currentY =
+                startY +
+                (y - startY) *
+                eased;
+
+
+            const currentZ =
+                startZ +
+                (z - startZ) *
+                eased;
+
+
+            carRotation.setAttribute(
+                "rotation",
+                {
+                    x: currentX,
+                    y: currentY,
+                    z: currentZ
+                }
+            );
+
+
+            if (progress < 1) {
+
+                requestAnimationFrame(
+                    animate
+                );
+
+            } else {
+
+                resolve();
+
+            }
+
+        }
+
+
+        requestAnimationFrame(
+            animate
+        );
+
+    });
+
+}
+
+
+/* =========================================================
+   WAIT
+   ========================================================= */
+
+function wait(
+    milliseconds
+) {
+
+    return new Promise(
+        resolve => {
+
+            setTimeout(
+                resolve,
+                milliseconds
+            );
+
+        }
+    );
+
+}
+
+
+/* =========================================================
+   MAIN TOUR
+   ========================================================= */
+
+async function startTour() {
+
+
+    /* =====================================================
+       TOP
+       ===================================================== */
+
+    carRotation.setAttribute(
+        "rotation",
+        {
+            x: 0,
+            y: 0,
+            z: 0
+        }
+    );
+
+    fadeIn(
+        topBox,
+        700
+    );
+
+    await wait(4000);
+
+
+    /* =====================================================
+       BOTTOM
+       ===================================================== */
+
+    await fadeOut(
+        topBox,
+        600
+    );
+
+    await rotateTo(
+        0,
+        180,
+        0,
+        2500
+    );
+
+    fadeIn(
+        bottomBox,
+        700
+    );
+
+    await wait(4500);
+
+
+    /* =====================================================
+       FRONT
+       ===================================================== */
+
+    await fadeOut(
+        bottomBox,
+        600
+    );
+
+    await rotateTo(
+        -90,
+        180,
+        0,
+        2500
+    );
+
+    fadeIn(
+        frontBox,
+        700
+    );
+
+    await wait(5000);
+
+
+    /* =====================================================
+       SIDE
+       ===================================================== */
+
+    await fadeOut(
+        frontBox,
+        600
+    );
+
+    await rotateTo(
+        -90,
+        90,
+        0,
+        2500
+    );
+
+    fadeIn(
+        sideBox,
+        700
+    );
+
+    await wait(4500);
+
+
+    /* =====================================================
+       REAR
+       ===================================================== */
+
+    await fadeOut(
+        sideBox,
+        600
+    );
+
+    await rotateTo(
+        -90,
+        0,
+        0,
+        2500
+    );
+
+    fadeIn(
+        backBox,
+        700
+    );
+
+    await wait(4500);
+
+
+    /* =====================================================
+       RETURN TO TOP
+       ===================================================== */
+
+    await fadeOut(
+        backBox,
+        600
+    );
+
+    await rotateTo(
+        0,
+        0,
+        0,
+        2500
+    );
+
+    await wait(500);
+
+    fadeIn(
+        topBox,
+        700
+    );
+
+}
+
 </script>
 
 </body>
